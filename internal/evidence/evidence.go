@@ -1,3 +1,4 @@
+// Package evidence holds the proof a probe attaches to its result.
 package evidence
 
 import "time"

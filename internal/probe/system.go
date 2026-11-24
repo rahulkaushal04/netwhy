@@ -11,9 +11,13 @@ import (
 
 var _ Probe = System{}
 
+// System needs an up, non-loopback interface with a usable address. A
+// link-local 169.254.x.x address does not count: it means DHCP failed.
+// The route check dials UDP, which asks the kernel for a route and sends nothing.
 type System struct{}
 
-func (System) Name() string   { return "system" }
+func (System) Name() string { return "system" }
+
 func (System) Deps() []string { return nil }
 
 func (System) Run(ctx context.Context) Result {

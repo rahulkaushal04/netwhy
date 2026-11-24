@@ -1,3 +1,4 @@
+// Package plan parses the target, picks the probes that apply, and runs them.
 package plan
 
 import (
@@ -7,14 +8,29 @@ import (
 	"github.com/rahulkaushal04/netwhy/internal/probe"
 )
 
+// Build returns the probes in dependency order: system, gateway, dns, tcp, then
+// tls for https and http for http and https. A bare host:port stops at tcp.
 func Build(t Target) []probe.Probe {
-	return []probe.Probe{
+	path := &probe.Path{}
+	probes := []probe.Probe{
 		probe.System{},
-		probe.DNS{Host: t.Host, IsIP: t.IsIP},
-		probe.TCP{Host: t.Host, Port: t.Port},
+		probe.Gateway{},
+		probe.DNS{Host: t.Host, IsIP: t.IsIP, Path: path},
+		probe.TCP{Port: t.Port, Path: path},
 	}
+	last := "tcp"
+	if t.Scheme == "https" {
+		probes = append(probes, probe.TLS{Host: t.Host, Path: path})
+		last = "tls"
+	}
+	if t.Scheme == "http" || t.Scheme == "https" {
+		probes = append(probes, probe.HTTP{URL: t.URL(), Dep: last})
+	}
+	return probes
 }
 
+// Run executes probes in order. A probe whose dependency did not work is skipped,
+// so one fault gives one failure. Probes must come after their dependencies.
 func Run(ctx context.Context, probes []probe.Probe, perProbe time.Duration) []probe.Result {
 	results := make([]probe.Result, 0, len(probes))
 	status := map[string]probe.Status{}
@@ -25,7 +41,7 @@ func Run(ctx context.Context, probes []probe.Probe, perProbe time.Duration) []pr
 			res = probe.Result{
 				Name:    p.Name(),
 				Status:  probe.Skipped,
-				Summary: "skipped because " + blocker + " did not pass",
+				Summary: "skipped because " + blocker + " did not work",
 			}
 		} else {
 			pctx, cancel := context.WithTimeout(ctx, perProbe)
@@ -40,7 +56,7 @@ func Run(ctx context.Context, probes []probe.Probe, perProbe time.Duration) []pr
 
 func blockedBy(p probe.Probe, status map[string]probe.Status) string {
 	for _, d := range p.Deps() {
-		if status[d] != probe.Pass {
+		if !status[d].Works() {
 			return d
 		}
 	}

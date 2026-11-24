@@ -11,13 +11,16 @@ import (
 )
 
 type Target struct {
-	Raw    string
+	Raw string
+	// Scheme is http, https, or tcp for a bare host:port.
 	Scheme string
 	Host   string
 	Port   int
+	Path   string
 	IsIP   bool
 }
 
+// ParseTarget accepts a URL, host:port, a hostname or an IP. A bare host is https on 443.
 func ParseTarget(raw string) (Target, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -29,10 +32,10 @@ func ParseTarget(raw string) (Target, error) {
 	if strings.Contains(raw, "://") {
 		u, err := url.Parse(raw)
 		if err != nil {
-			return Target{}, fmt.Errorf("Invalid URL: %w", err)
+			return Target{}, fmt.Errorf("invalid URL: %w", err)
 		}
 
-		t.Scheme, t.Host = u.Scheme, u.Hostname()
+		t.Scheme, t.Host, t.Path = u.Scheme, u.Hostname(), u.RequestURI()
 
 		switch u.Scheme {
 		case "http":
@@ -54,7 +57,7 @@ func ParseTarget(raw string) (Target, error) {
 			return Target{}, err
 		}
 	} else {
-		t.Scheme, t.Host, t.Port = "https", strings.Trim(raw, "[]"), 443
+		t.Scheme, t.Host, t.Port, t.Path = "https", strings.Trim(raw, "[]"), 443, "/"
 	}
 
 	if t.Host == "" {
@@ -65,6 +68,17 @@ func ParseTarget(raw string) (Target, error) {
 	t.IsIP = err == nil
 
 	return t, nil
+}
+
+func (t Target) URL() string {
+	host := t.Host
+	switch {
+	case t.Scheme == "http" && t.Port != 80, t.Scheme == "https" && t.Port != 443:
+		host = net.JoinHostPort(t.Host, strconv.Itoa(t.Port))
+	case strings.Contains(t.Host, ":"):
+		host = "[" + t.Host + "]"
+	}
+	return t.Scheme + "://" + host + t.Path
 }
 
 func parsePort(s string) (int, error) {

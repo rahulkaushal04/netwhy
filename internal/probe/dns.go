@@ -2,66 +2,264 @@ package probe
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"net"
+	"net/netip"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/miekg/dns"
 
 	"github.com/rahulkaushal04/netwhy/internal/evidence"
 )
 
+const resolvConf = "/etc/resolv.conf"
+
 var _ Probe = DNS{}
 
+// DNS asks every configured resolver directly, bypassing libc, so one broken
+// resolver cannot hide behind a working one. Direct queries skip search domains,
+// /etc/hosts and mDNS, so if none answers but the system resolver does, it warns.
 type DNS struct {
 	Host string
 	IsIP bool
+	// Resolvers are host:port; empty means read /etc/resolv.conf.
+	Resolvers []string
+	Path      *Path
+
+	// lookup replaces the system-resolver fallback in tests.
+	lookup func(ctx context.Context, host string) []netip.Addr
 }
 
-func (DNS) Name() string   { return "dns" }
-func (DNS) Deps() []string { return []string{"system"} }
+func (DNS) Name() string { return "dns" }
+
+func (DNS) Deps() []string { return []string{"gateway"} }
 
 func (p DNS) Run(ctx context.Context) Result {
 	res := Result{Name: "dns"}
 
 	if p.IsIP {
+		addr, err := netip.ParseAddr(p.Host)
+		if err != nil {
+			res.Status = Fail
+			res.Summary = "target is not a valid IP address"
+			res.Evidence = evidence.Evidence{Sent: "parse " + p.Host, Error: err.Error()}
+			return res
+		}
+		p.Path.Addrs = []netip.Addr{addr.Unmap()}
 		res.Status = Pass
 		res.Summary = "target is an IP address, no lookup needed"
 		res.Evidence = evidence.Evidence{Sent: "none", Received: p.Host}
 		return res
 	}
 
-	start := time.Now()
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, p.Host)
-	ev := evidence.Evidence{
-		Sent:     "lookup " + p.Host + " via system resolver",
-		Duration: time.Since(start),
-	}
-
-	if err != nil {
-		ev.Error = err.Error()
-
-		res.Status = Fail
-		res.Evidence = ev
-
-		var dnsErr *net.DNSError
-		switch {
-		case errors.As(err, &dnsErr) && dnsErr.IsNotFound:
-			res.Summary = p.Host + " does not exist (no such host)"
-		case errors.As(err, &dnsErr) && dnsErr.IsTimeout:
-			res.Summary = "DNS resolver did not answer in time"
-		default:
-			res.Summary = "DNS lookup failed"
+	resolvers := p.Resolvers
+	if len(resolvers) == 0 {
+		var err error
+		if resolvers, err = systemResolvers(resolvConf); err != nil {
+			res.Status = Fail
+			res.Summary = "no DNS resolver is configured"
+			res.Evidence = evidence.Evidence{Sent: "read " + resolvConf, Error: err.Error()}
+			return res
 		}
-		return res
 	}
 
-	ips := make([]string, len(addrs))
-	for i, a := range addrs {
-		ips[i] = a.IP.String()
+	start := time.Now()
+	answers := queryAll(ctx, resolvers, p.Host)
+	status, summary, addrs := summarize(p.Host, answers)
+	ev := evidence.Evidence{
+		Sent:     "A and AAAA for " + p.Host + " to " + strings.Join(resolvers, ", "),
+		Received: describe(answers),
 	}
-	ev.Received = strings.Join(ips, ", ")
-	res.Status = Pass
-	res.Summary = p.Host + " resolved to " + ev.Received
-	res.Evidence = ev
+
+	if len(addrs) == 0 {
+		lookup := p.lookup
+		if lookup == nil {
+			lookup = lookupSystem
+		}
+		if sys := lookup(ctx, p.Host); len(sys) > 0 {
+			addrs = sys
+			status = Warn
+			summary = p.Host + " was found by the system resolver but not by the configured resolvers (hosts file, search domain or mDNS?)"
+			ev.Received += "\nsystem resolver: " + joinAddrs(sys)
+		}
+	}
+
+	ev.Duration = time.Since(start)
+	res.Status, res.Summary, res.Evidence = status, summary, ev
+	if status != Fail {
+		p.Path.Addrs = addrs
+	}
 	return res
+}
+
+type answer struct {
+	resolver string
+	addrs    []netip.Addr
+	rcode    int // DNS response code, -1 when no reply arrived
+	rtt      time.Duration
+	err      error // set only when no reply arrived at all
+}
+
+func systemResolvers(path string) ([]string, error) {
+	cfg, err := dns.ClientConfigFromFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, s := range cfg.Servers {
+		out = append(out, net.JoinHostPort(s, cfg.Port))
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no nameserver in %s", path)
+	}
+	return out, nil
+}
+
+func queryAll(ctx context.Context, resolvers []string, host string) []answer {
+	out := make([]answer, len(resolvers))
+	var wg sync.WaitGroup
+	for i, r := range resolvers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out[i] = queryResolver(ctx, r, dns.Fqdn(host))
+		}()
+	}
+	wg.Wait()
+	return out
+}
+
+// queryResolver sets err only when both the A and AAAA queries got no reply.
+func queryResolver(ctx context.Context, server, name string) answer {
+	a := answer{resolver: server, rcode: -1}
+	failures := 0
+	for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+		r, rtt, err := exchange(ctx, server, name, qtype)
+		a.rtt += rtt
+		if err != nil {
+			failures++
+			a.err = err
+			continue
+		}
+		if a.rcode == -1 || r.Rcode != dns.RcodeSuccess {
+			a.rcode = r.Rcode
+		}
+		a.addrs = append(a.addrs, extractAddrs(r)...)
+	}
+	if failures < 2 {
+		a.err = nil
+	}
+	return a
+}
+
+// exchange queries over UDP with EDNS0 and retries over TCP when truncated.
+func exchange(ctx context.Context, server, name string, qtype uint16) (*dns.Msg, time.Duration, error) {
+	m := new(dns.Msg)
+	m.SetQuestion(name, qtype)
+	m.SetEdns0(1232, false)
+
+	r, rtt, err := (&dns.Client{}).ExchangeContext(ctx, m, server)
+	if err == nil && r.Truncated {
+		var rtt2 time.Duration
+		r, rtt2, err = (&dns.Client{Net: "tcp"}).ExchangeContext(ctx, m, server)
+		rtt += rtt2
+	}
+	return r, rtt, err
+}
+
+func extractAddrs(r *dns.Msg) []netip.Addr {
+	var out []netip.Addr
+	for _, rr := range r.Answer {
+		var ip net.IP
+		switch v := rr.(type) {
+		case *dns.A:
+			ip = v.A
+		case *dns.AAAA:
+			ip = v.AAAA
+		default:
+			continue
+		}
+		if a, ok := netip.AddrFromSlice(ip); ok {
+			out = append(out, a.Unmap())
+		}
+	}
+	return out
+}
+
+func summarize(host string, answers []answer) (Status, string, []netip.Addr) {
+	var addrs []netip.Addr
+	seen := map[netip.Addr]bool{}
+	var bad []string // resolvers that gave no usable answer
+	nxdomain, silent, empty := 0, 0, 0
+
+	for _, a := range answers {
+		for _, ip := range a.addrs {
+			if !seen[ip] {
+				seen[ip] = true
+				addrs = append(addrs, ip)
+			}
+		}
+		switch {
+		case a.err != nil:
+			silent++
+			bad = append(bad, a.resolver)
+		case len(a.addrs) > 0:
+		case a.rcode == dns.RcodeNameError:
+			nxdomain++
+			bad = append(bad, a.resolver)
+		case a.rcode == dns.RcodeSuccess:
+			empty++
+		default:
+			bad = append(bad, a.resolver)
+		}
+	}
+
+	switch {
+	case len(addrs) > 0 && len(bad) > 0:
+		return Warn, fmt.Sprintf("%s resolved, but %s gave no usable answer", host, strings.Join(bad, ", ")), addrs
+	case len(addrs) > 0:
+		return Pass, host + " resolved to " + joinAddrs(addrs), addrs
+	case nxdomain == len(answers):
+		return Fail, host + " does not exist (NXDOMAIN from every resolver)", nil
+	case silent == len(answers):
+		return Fail, "no DNS resolver answered (timeout or unreachable)", nil
+	case empty > 0 && len(bad) == 0:
+		return Fail, host + " has no A or AAAA records", nil
+	default:
+		return Fail, "DNS resolvers returned errors (SERVFAIL or REFUSED) and no address", nil
+	}
+}
+
+func describe(answers []answer) string {
+	lines := make([]string, len(answers))
+	for i, a := range answers {
+		if a.err != nil {
+			lines[i] = fmt.Sprintf("%s: no reply (%v)", a.resolver, a.err)
+			continue
+		}
+		lines[i] = fmt.Sprintf("%s: %s, %d address(es), %s", a.resolver, dns.RcodeToString[a.rcode], len(a.addrs), a.rtt.Round(time.Millisecond))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func lookupSystem(ctx context.Context, host string) []netip.Addr {
+	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	if err != nil {
+		return nil
+	}
+	out := make([]netip.Addr, len(ips))
+	for i, ip := range ips {
+		out[i] = ip.Unmap()
+	}
+	return out
+}
+
+func joinAddrs(addrs []netip.Addr) string {
+	s := make([]string, len(addrs))
+	for i, a := range addrs {
+		s[i] = a.String()
+	}
+	return strings.Join(s, ", ")
 }
