@@ -1,0 +1,15 @@
+netwhy: example.com
+
+  ✓ system   interface up
+  ✗ dns      no DNS resolver answered (timeout or unreachable)
+  - tcp      skipped because dns did not work
+
+Verdict: the dns layer failed
+  no DNS resolver answered (timeout or unreachable)
+
+Evidence:
+  sent:     A and AAAA for example.com to 192.0.2.53:53, 192.0.2.54:53
+  received: 192.0.2.53:53: no reply (i/o timeout)
+            192.0.2.54:53: no reply (i/o timeout)
+  error:    read udp: i/o timeout
+  took:     5s

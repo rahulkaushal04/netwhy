@@ -3,20 +3,29 @@ package probe
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptrace"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
+	"golang.org/x/net/http/httpproxy"
+
 	"github.com/rahulkaushal04/netwhy/internal/evidence"
 )
 
+// bodySample is how much of the response body to read.
+const bodySample = 64 << 10
+
 var _ Probe = HTTP{}
 
-// HTTP makes one GET. Redirects are reported, not followed, and proxy
-// environment variables are ignored, so the result reflects the direct path.
+// HTTP makes one GET and reads the first 64 KiB of the body. Redirects are
+// reported, not followed. Proxy environment variables are not used, so the
+// result reflects the direct path; a configured proxy is reported as a warning.
 type HTTP struct {
 	URL string
 	// Dep is the probe that must work first: tls for https, else tcp.
@@ -53,17 +62,43 @@ func (p HTTP) Run(ctx context.Context) Result {
 		res.Status, res.Summary, res.Evidence = Fail, "HTTP request failed even though the connection works", ev
 		return res
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 
-	ev.Received = resp.Status + "\n" + tm.breakdown(start, ev.Duration)
+	// Headers are small. Reading some body is what exposes a PMTU black hole:
+	// large packets are dropped, so the transfer stalls after the first ones.
+	n, readErr := io.CopyN(io.Discard, resp.Body, bodySample)
+	ev.Duration = time.Since(start)
+	ev.Received = fmt.Sprintf("%s, %d body bytes\n%s", resp.Status, n, tm.breakdown(start, ev.Duration))
 	res.Evidence = ev
+
 	res.Status = Pass
 	res.Summary = "server answered " + resp.Status
-	if resp.StatusCode >= 500 {
+	switch {
+	case readErr != nil && !errors.Is(readErr, io.EOF):
+		res.Status = Warn
+		res.Summary = fmt.Sprintf("the response stopped after %d bytes (%v): large packets may be dropped, see the pmtu result", n, readErr)
+	case resp.StatusCode >= 500:
 		res.Status = Warn
 		res.Summary = "server answered with an error: " + resp.Status
 	}
+	if proxy := proxyFor(p.URL); proxy != "" && res.Status == Pass {
+		res.Status = Warn
+		res.Summary += "; a proxy (" + proxy + ") is set in the environment and applications will use it, but netwhy tested the direct path"
+	}
 	return res
+}
+
+// proxyFor returns the proxy host the environment configures for rawURL, or "".
+func proxyFor(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	p, err := httpproxy.FromEnvironment().ProxyFunc()(u)
+	if err != nil || p == nil {
+		return ""
+	}
+	return p.Host
 }
 
 // timings is locked because httptrace hooks can run on different goroutines.

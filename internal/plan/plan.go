@@ -8,16 +8,23 @@ import (
 	"github.com/rahulkaushal04/netwhy/internal/probe"
 )
 
-// Build returns the probes in dependency order: system, gateway, dns, tcp, then
-// tls for https and http for http and https. A bare host:port stops at tcp.
-func Build(t Target) []probe.Probe {
+// Build returns the probes in dependency order: system, gateway, dns, portal,
+// tcp, pmtu, then tls for https and http for http and https. A bare host:port
+// stops after pmtu. The portal check is the only request to a host the user
+// did not name, so it is left out unless portal is true.
+func Build(t Target, portal bool) []probe.Probe {
 	path := &probe.Path{}
 	probes := []probe.Probe{
 		probe.System{},
 		probe.Gateway{},
 		probe.DNS{Host: t.Host, IsIP: t.IsIP, Path: path},
-		probe.TCP{Port: t.Port, Path: path},
 	}
+	tcpDep := "dns"
+	if portal {
+		probes = append(probes, probe.Portal{})
+		tcpDep = "portal"
+	}
+	probes = append(probes, probe.TCP{Port: t.Port, Path: path, Dep: tcpDep}, probe.PMTU{Path: path})
 	last := "tcp"
 	if t.Scheme == "https" {
 		probes = append(probes, probe.TLS{Host: t.Host, Path: path})

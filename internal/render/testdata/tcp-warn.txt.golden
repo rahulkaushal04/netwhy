@@ -1,0 +1,13 @@
+netwhy: example.com
+
+  ✓ system   interface up
+  ✓ dns      example.com resolved to 192.0.2.1, 2001:db8::1
+  ! tcp      IPv6 failed (connection timed out) but IPv4 works; clients that try IPv6 first will be slow
+
+Verdict: reachable, with 1 warning(s)
+
+Warning (tcp): IPv6 failed (connection timed out) but IPv4 works; clients that try IPv6 first will be slow
+  sent:     TCP connect to port 443
+  received: 192.0.2.1:443: connected in 20ms
+            [2001:db8::1]:443: failed: i/o timeout
+  took:     5s

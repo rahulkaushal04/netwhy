@@ -17,6 +17,17 @@ import (
 // startDNS runs a UDP DNS server that answers 192.0.2.1 for ok.test and
 // NXDOMAIN for every other name. It returns the server's address.
 func startDNS(t *testing.T) string {
+	return startDNSWith(t, func(name string) string {
+		if name == "ok.test." {
+			return "192.0.2.1"
+		}
+		return ""
+	})
+}
+
+// startDNSWith runs a UDP DNS server. answer maps a name to the IPv4 address
+// to return, or "" for NXDOMAIN. It returns the server's address.
+func startDNSWith(t *testing.T, answer func(name string) string) string {
 	t.Helper()
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
@@ -30,13 +41,14 @@ func startDNS(t *testing.T) string {
 			m := new(dns.Msg)
 			m.SetReply(r)
 			q := r.Question[0]
+			ip := answer(q.Name)
 			switch {
-			case q.Name != "ok.test.":
+			case ip == "":
 				m.Rcode = dns.RcodeNameError
 			case q.Qtype == dns.TypeA:
 				m.Answer = []dns.RR{&dns.A{
 					Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
-					A:   net.ParseIP("192.0.2.1"),
+					A:   net.ParseIP(ip),
 				}}
 			}
 			w.WriteMsg(m)
@@ -149,5 +161,61 @@ func TestSystemResolversNone(t *testing.T) {
 	}
 	if _, err := systemResolvers(file); err == nil {
 		t.Error("want an error when no nameserver is configured")
+	}
+}
+
+func TestDNSDetectsHijacking(t *testing.T) {
+	hijacker := startDNSWith(t, func(string) string { return "192.0.2.1" })
+
+	got := runDNS(t, DNS{Host: "ok.test", Resolvers: []string{hijacker}, Path: &Path{}, lookup: noSystem})
+
+	if got.Status != Warn || !strings.Contains(got.Summary, "NXDOMAIN hijacking") {
+		t.Errorf("got %s %q, want warn: NXDOMAIN hijacking", got.Status, got.Summary)
+	}
+}
+
+func TestDNSDetectsBlockedName(t *testing.T) {
+	blocker := startDNSWith(t, func(name string) string {
+		if name == "ok.test." {
+			return "0.0.0.0"
+		}
+		return ""
+	})
+
+	got := runDNS(t, DNS{Host: "ok.test", Resolvers: []string{blocker}, Path: &Path{}, lookup: noSystem})
+
+	if got.Status != Warn || !strings.Contains(got.Summary, "blocking the name") {
+		t.Errorf("got %s %q, want warn: blocking the name", got.Status, got.Summary)
+	}
+}
+
+func TestDNSDetectsPrivateAnswerFromOneResolver(t *testing.T) {
+	good := startDNS(t)
+	poisoned := startDNSWith(t, func(name string) string {
+		if name == "ok.test." {
+			return "10.0.0.5"
+		}
+		return ""
+	})
+
+	got := runDNS(t, DNS{Host: "ok.test", Resolvers: []string{good, poisoned}, Path: &Path{}, lookup: noSystem})
+
+	if got.Status != Warn || !strings.Contains(got.Summary, "only private addresses") {
+		t.Errorf("got %s %q, want warn: only private addresses", got.Status, got.Summary)
+	}
+}
+
+func TestDNSAllPrivateIsFine(t *testing.T) {
+	internal := startDNSWith(t, func(name string) string {
+		if name == "ok.test." {
+			return "10.0.0.5"
+		}
+		return ""
+	})
+
+	got := runDNS(t, DNS{Host: "ok.test", Resolvers: []string{internal}, Path: &Path{}, lookup: noSystem})
+
+	if got.Status != Pass {
+		t.Errorf("got %s %q, want pass for an internal name", got.Status, got.Summary)
 	}
 }

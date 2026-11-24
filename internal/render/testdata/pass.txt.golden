@@ -1,0 +1,7 @@
+netwhy: example.com
+
+  ✓ system   interface up
+  ✓ dns      example.com resolved to 192.0.2.1
+  ✓ tcp      connected over IPv4
+
+Verdict: all checks passed

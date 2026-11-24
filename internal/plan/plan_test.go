@@ -66,19 +66,21 @@ func TestRunSkipsOnUnknownDependency(t *testing.T) {
 
 func TestBuild(t *testing.T) {
 	tests := []struct {
-		in   string
-		want []string
+		in     string
+		portal bool
+		want   []string
 	}{
-		{"https://example.com", []string{"system", "gateway", "dns", "tcp", "tls", "http"}},
-		{"http://example.com", []string{"system", "gateway", "dns", "tcp", "http"}},
-		{"example.com:22", []string{"system", "gateway", "dns", "tcp"}},
+		{"https://example.com", true, []string{"system", "gateway", "dns", "portal", "tcp", "pmtu", "tls", "http"}},
+		{"https://example.com", false, []string{"system", "gateway", "dns", "tcp", "pmtu", "tls", "http"}},
+		{"http://example.com", false, []string{"system", "gateway", "dns", "tcp", "pmtu", "http"}},
+		{"example.com:22", true, []string{"system", "gateway", "dns", "portal", "tcp", "pmtu"}},
 	}
 	for _, tc := range tests {
 		target, err := ParseTarget(tc.in)
 		if err != nil {
 			t.Fatal(err)
 		}
-		probes := Build(target)
+		probes := Build(target, tc.portal)
 
 		var names []string
 		for _, p := range probes {
@@ -90,7 +92,7 @@ func TestBuild(t *testing.T) {
 			names = append(names, p.Name())
 		}
 		if !slices.Equal(names, tc.want) {
-			t.Errorf("%s: probes = %v, want %v", tc.in, names, tc.want)
+			t.Errorf("%s (portal=%v): probes = %v, want %v", tc.in, tc.portal, names, tc.want)
 		}
 	}
 }

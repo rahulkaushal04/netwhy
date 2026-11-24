@@ -1,0 +1,7 @@
+**netwhy** `example.com`: all checks passed
+
+| Layer | Status | Result |
+|---|---|---|
+| system | pass | interface up |
+| dns | pass | example.com resolved to 192.0.2.1 |
+| tcp | pass | connected over IPv4 |

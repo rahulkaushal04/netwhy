@@ -1,0 +1,17 @@
+**netwhy** `example.com`: the **dns** layer failed
+
+| Layer | Status | Result |
+|---|---|---|
+| system | pass | interface up |
+| dns | fail | no DNS resolver answered (timeout or unreachable) |
+| tcp | skipped | skipped because dns did not work |
+
+Evidence for dns:
+
+```
+  sent:     A and AAAA for example.com to 192.0.2.53:53, 192.0.2.54:53
+  received: 192.0.2.53:53: no reply (i/o timeout)
+            192.0.2.54:53: no reply (i/o timeout)
+  error:    read udp: i/o timeout
+  took:     5s
+```

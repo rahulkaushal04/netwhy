@@ -63,3 +63,40 @@ func TestHTTPConnectionRefused(t *testing.T) {
 		t.Errorf("status = %s, want fail", got.Status)
 	}
 }
+
+func TestHTTPStalledBodyWarns(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "1000000")
+		w.Write(make([]byte, 100))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+	defer cancel()
+	got := HTTP{URL: srv.URL, Dep: "tcp"}.Run(ctx)
+
+	if got.Status != Warn || !strings.Contains(got.Summary, "stopped after 100 bytes") {
+		t.Errorf("got %s %q, want warn: stopped after 100 bytes", got.Status, got.Summary)
+	}
+}
+
+func TestProxyFor(t *testing.T) {
+	for _, k := range []string{"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy"} {
+		t.Setenv(k, "")
+	}
+	if got := proxyFor("https://example.com/"); got != "" {
+		t.Errorf("no proxy configured, got %q", got)
+	}
+
+	t.Setenv("HTTPS_PROXY", "http://user:secret@proxy.example:3128")
+	if got := proxyFor("https://example.com/"); got != "proxy.example:3128" {
+		t.Errorf("got %q, want the proxy host without credentials", got)
+	}
+
+	t.Setenv("NO_PROXY", "example.com")
+	if got := proxyFor("https://example.com/"); got != "" {
+		t.Errorf("NO_PROXY should bypass the proxy, got %q", got)
+	}
+}
