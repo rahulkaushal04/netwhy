@@ -56,10 +56,7 @@ setup_network() {
 }
 
 make_cert() {
-  openssl ecparam -genkey -name prime256v1 -noout -out "$WORK/key.pem"
-  openssl req -new -key "$WORK/key.pem" -subj "/CN=$CERT_NAME" -out "$WORK/req.csr"
-  openssl x509 -req -in "$WORK/req.csr" -signkey "$WORK/key.pem" -days "$CERT_DAYS" \
-    -extfile <(printf 'subjectAltName=DNS:%s\n' "$CERT_NAME") -out "$WORK/cert.pem" 2>/dev/null
+  "$CERTGEN" -name "$CERT_NAME" -days "$CERT_DAYS" -cert "$WORK/cert.pem" -key "$WORK/key.pem"
 }
 
 start_servers() {

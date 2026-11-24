@@ -107,6 +107,7 @@ lowest failing layer.
 
 ```sh
 go test -race ./...
+go build -o netwhy ./cmd/netwhy && go build -o certgen ./test/netns/certgen
 sudo test/netns/run.sh "$PWD/netwhy"   # Linux only: breaks one thing per scenario
 ```
 

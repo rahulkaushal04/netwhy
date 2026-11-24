@@ -3,6 +3,7 @@
 # netwhy names the right layer. Needs Linux, root, dnsmasq, nftables, openssl
 # and jq.
 #
+#   go build -o certgen ./test/netns/certgen   # next to the netwhy binary
 #   sudo test/netns/run.sh /path/to/netwhy [scenario-name...]
 set -u
 cd "$(dirname "$0")" || exit 1
@@ -10,6 +11,9 @@ cd "$(dirname "$0")" || exit 1
 NETWHY=$(realpath "${1:?usage: run.sh /path/to/netwhy [scenario...]}")
 shift
 export NETWHY
+# certgen is built next to netwhy, because root may not have Go on its PATH.
+CERTGEN=$(realpath "${CERTGEN:-$(dirname "$NETWHY")/certgen}")
+export CERTGEN
 
 if (($# > 0)); then
   scenarios=("$@")
