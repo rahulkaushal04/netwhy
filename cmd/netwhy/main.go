@@ -1,3 +1,16 @@
+// Command netwhy finds out why you can't reach something.
+//
+// It tests each layer in dependency order (system, gateway, DNS, TCP, TLS, HTTP),
+// names the lowest layer that failed, and prints the evidence.
+//
+// Usage:
+//
+//	netwhy [--timeout 5s] <target>
+//
+// The target is a URL, host:port, a hostname or an IP. A bare host is tested as
+// https on port 443; host:port stops after the TCP check.
+//
+// Exit codes: 0 no layer failed, 1 a layer failed, 2 invalid input.
 package main
 
 import (
@@ -15,8 +28,10 @@ import (
 	"github.com/rahulkaushal04/netwhy/internal/verdict"
 )
 
+// version is set at release time with -ldflags "-X main.version=<tag>".
 var version = "dev"
 
+// errFailure means a layer failed. The report was already printed.
 var errFailure = errors.New("a layer failed")
 
 func main() {

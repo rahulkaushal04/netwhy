@@ -8,13 +8,14 @@ func TestParseTarget(t *testing.T) {
 		want    Target
 		wantErr bool
 	}{
-		{"https://example.com", Target{Raw: "https://example.com", Scheme: "https", Host: "example.com", Port: 443}, false},
-		{"http://example.com:8080/x", Target{Raw: "http://example.com:8080/x", Scheme: "http", Host: "example.com", Port: 8080}, false},
+		{"https://example.com", Target{Raw: "https://example.com", Scheme: "https", Host: "example.com", Port: 443, Path: "/"}, false},
+		{"http://example.com:8080/x", Target{Raw: "http://example.com:8080/x", Scheme: "http", Host: "example.com", Port: 8080, Path: "/x"}, false},
+		{"https://example.com/a?b=1", Target{Raw: "https://example.com/a?b=1", Scheme: "https", Host: "example.com", Port: 443, Path: "/a?b=1"}, false},
 		{"example.com:22", Target{Raw: "example.com:22", Scheme: "tcp", Host: "example.com", Port: 22}, false},
-		{"example.com", Target{Raw: "example.com", Scheme: "https", Host: "example.com", Port: 443}, false},
-		{"1.1.1.1", Target{Raw: "1.1.1.1", Scheme: "https", Host: "1.1.1.1", Port: 443, IsIP: true}, false},
+		{"example.com", Target{Raw: "example.com", Scheme: "https", Host: "example.com", Port: 443, Path: "/"}, false},
+		{"1.1.1.1", Target{Raw: "1.1.1.1", Scheme: "https", Host: "1.1.1.1", Port: 443, Path: "/", IsIP: true}, false},
 		{"[2001:db8::1]:443", Target{Raw: "[2001:db8::1]:443", Scheme: "tcp", Host: "2001:db8::1", Port: 443, IsIP: true}, false},
-		{"2001:db8::1", Target{Raw: "2001:db8::1", Scheme: "https", Host: "2001:db8::1", Port: 443, IsIP: true}, false},
+		{"2001:db8::1", Target{Raw: "2001:db8::1", Scheme: "https", Host: "2001:db8::1", Port: 443, Path: "/", IsIP: true}, false},
 		{"", Target{}, true},
 		{"ftp://example.com", Target{}, true},
 		{"example.com:99999", Target{}, true},
@@ -29,6 +30,25 @@ func TestParseTarget(t *testing.T) {
 		}
 		if got != tc.want {
 			t.Errorf("ParseTarget(%q) = %+v, want %+v", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestTargetURL(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"https://example.com", "https://example.com/"},
+		{"http://example.com:8080/x?y=1", "http://example.com:8080/x?y=1"},
+		{"https://example.com:8443/a", "https://example.com:8443/a"},
+		{"example.com", "https://example.com/"},
+		{"2001:db8::1", "https://[2001:db8::1]/"},
+	}
+	for _, tc := range tests {
+		target, err := ParseTarget(tc.in)
+		if err != nil {
+			t.Fatalf("ParseTarget(%q): %v", tc.in, err)
+		}
+		if got := target.URL(); got != tc.want {
+			t.Errorf("URL(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }

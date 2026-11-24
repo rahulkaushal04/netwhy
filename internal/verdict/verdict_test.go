@@ -16,6 +16,7 @@ func TestDecide(t *testing.T) {
 		results   []probe.Result
 		wantOK    bool
 		wantLayer string
+		wantWarns int
 	}{
 		{
 			name:    "all pass",
@@ -42,6 +43,18 @@ func TestDecide(t *testing.T) {
 			results:   []probe.Result{res("system", probe.Pass), res("dns", probe.Fail), res("tcp", probe.Fail)},
 			wantLayer: "dns",
 		},
+		{
+			name:      "warning alone is not a failure",
+			results:   []probe.Result{res("system", probe.Pass), res("tcp", probe.Warn)},
+			wantOK:    true,
+			wantWarns: 1,
+		},
+		{
+			name:      "warnings are kept next to a failure",
+			results:   []probe.Result{res("gateway", probe.Warn), res("dns", probe.Fail), res("tcp", probe.Skipped)},
+			wantLayer: "dns",
+			wantWarns: 1,
+		},
 	}
 
 	for _, tc := range tests {
@@ -52,6 +65,9 @@ func TestDecide(t *testing.T) {
 			}
 			if got.Layer != tc.wantLayer {
 				t.Errorf("Layer = %q, want %q", got.Layer, tc.wantLayer)
+			}
+			if len(got.Warnings) != tc.wantWarns {
+				t.Errorf("warnings = %d, want %d", len(got.Warnings), tc.wantWarns)
 			}
 		})
 	}
