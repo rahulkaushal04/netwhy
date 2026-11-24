@@ -3,8 +3,10 @@ package probe
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -86,12 +88,86 @@ func (p DNS) Run(ctx context.Context) Result {
 		}
 	}
 
+	if status != Fail {
+		if issues := resolverIssues(ctx, answers); len(issues) > 0 {
+			joined := strings.Join(issues, "; ")
+			if status == Warn {
+				summary += "; " + joined
+			} else {
+				summary = joined
+			}
+			status = Warn
+			ev.Received += "\n" + strings.Join(issues, "\n")
+		}
+	}
+
 	ev.Duration = time.Since(start)
 	res.Status, res.Summary, res.Evidence = status, summary, ev
 	if status != Fail {
 		p.Path.Addrs = addrs
 	}
 	return res
+}
+
+// resolverIssues reports resolvers that lie or filter: they answer for a name
+// that cannot exist (NXDOMAIN hijacking), answer 0.0.0.0 (a DNS blocker), or
+// give private addresses where another resolver gives public ones.
+func resolverIssues(ctx context.Context, answers []answer) []string {
+	var issues []string
+	for _, r := range hijackers(ctx, answers) {
+		issues = append(issues, r+" answers for names that do not exist (NXDOMAIN hijacking, typos land on its page)")
+	}
+
+	var public, private []string
+	for _, a := range answers {
+		switch {
+		case len(a.addrs) == 0:
+		case slices.ContainsFunc(a.addrs, netip.Addr.IsUnspecified):
+			issues = append(issues, a.resolver+" answered 0.0.0.0 or ::, so it is blocking the name (DNS filter?)")
+		case !slices.ContainsFunc(a.addrs, func(ip netip.Addr) bool { return !isPrivate(ip) }):
+			private = append(private, a.resolver)
+		default:
+			public = append(public, a.resolver)
+		}
+	}
+	if len(public) > 0 {
+		for _, r := range private {
+			issues = append(issues, r+" returns only private addresses while "+public[0]+" returns public ones")
+		}
+	}
+	return issues
+}
+
+func isPrivate(ip netip.Addr) bool {
+	return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
+}
+
+// hijackers returns the resolvers that answer with an address for a random
+// name under .com, which cannot exist.
+func hijackers(ctx context.Context, answers []answer) []string {
+	name := fmt.Sprintf("netwhy-%08x.com.", rand.Uint32())
+	hijacked := make([]bool, len(answers))
+	var wg sync.WaitGroup
+	for i, a := range answers {
+		if a.err != nil {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r, _, err := exchange(ctx, a.resolver, name, dns.TypeA)
+			hijacked[i] = err == nil && r.Rcode == dns.RcodeSuccess && len(extractAddrs(r)) > 0
+		}()
+	}
+	wg.Wait()
+
+	var out []string
+	for i, h := range hijacked {
+		if h {
+			out = append(out, answers[i].resolver)
+		}
+	}
+	return out
 }
 
 type answer struct {

@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "target": "example.com",
+  "ok": true,
+  "summary": "reachable, with 1 warning(s)",
+  "evidence": {
+    "sent": "",
+    "received": "",
+    "duration_ms": 0
+  },
+  "warnings": [
+    {
+      "name": "tcp",
+      "status": "warn",
+      "summary": "IPv6 failed (connection timed out) but IPv4 works; clients that try IPv6 first will be slow",
+      "evidence": {
+        "sent": "TCP connect to port 443",
+        "received": "192.0.2.1:443: connected in 20ms\n[2001:db8::1]:443: failed: i/o timeout",
+        "duration_ms": 5000
+      }
+    }
+  ],
+  "results": [
+    {
+      "name": "system",
+      "status": "pass",
+      "summary": "interface up",
+      "evidence": {
+        "sent": "",
+        "received": "",
+        "duration_ms": 0
+      }
+    },
+    {
+      "name": "dns",
+      "status": "pass",
+      "summary": "example.com resolved to 192.0.2.1, 2001:db8::1",
+      "evidence": {
+        "sent": "",
+        "received": "",
+        "duration_ms": 0
+      }
+    },
+    {
+      "name": "tcp",
+      "status": "warn",
+      "summary": "IPv6 failed (connection timed out) but IPv4 works; clients that try IPv6 first will be slow",
+      "evidence": {
+        "sent": "TCP connect to port 443",
+        "received": "192.0.2.1:443: connected in 20ms\n[2001:db8::1]:443: failed: i/o timeout",
+        "duration_ms": 5000
+      }
+    }
+  ]
+}

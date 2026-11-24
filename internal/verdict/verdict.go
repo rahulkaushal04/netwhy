@@ -3,6 +3,7 @@ package verdict
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/rahulkaushal04/netwhy/internal/evidence"
 	"github.com/rahulkaushal04/netwhy/internal/probe"
@@ -28,9 +29,15 @@ func Decide(results []probe.Result) Verdict {
 	}
 	for _, r := range results {
 		if r.Status == probe.Fail {
+			summary := r.Summary
+			// A black hole drops the large handshake packets, so it shows up as
+			// a TLS or HTTP failure. The pmtu warning is the real clue.
+			if (r.Name == "tls" || r.Name == "http") && slices.ContainsFunc(warnings, func(w probe.Result) bool { return w.Name == "pmtu" }) {
+				summary += "; the pmtu warning suggests large packets are dropped, so a path MTU black hole may be the cause"
+			}
 			return Verdict{
 				Layer:    r.Name,
-				Summary:  r.Summary,
+				Summary:  summary,
 				Evidence: r.Evidence,
 				Warnings: warnings,
 				Results:  results,

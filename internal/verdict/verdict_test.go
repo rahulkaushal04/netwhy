@@ -1,6 +1,7 @@
 package verdict
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/rahulkaushal04/netwhy/internal/probe"
@@ -70,5 +71,18 @@ func TestDecide(t *testing.T) {
 				t.Errorf("warnings = %d, want %d", len(got.Warnings), tc.wantWarns)
 			}
 		})
+	}
+}
+
+func TestDecideExplainsTLSFailureAfterPMTUWarning(t *testing.T) {
+	got := Decide([]probe.Result{res("tcp", probe.Pass), res("pmtu", probe.Warn), res("tls", probe.Fail)})
+
+	if got.Layer != "tls" || !strings.Contains(got.Summary, "path MTU black hole") {
+		t.Errorf("layer %q summary %q, want tls with the black-hole hint", got.Layer, got.Summary)
+	}
+
+	plain := Decide([]probe.Result{res("tcp", probe.Pass), res("pmtu", probe.Pass), res("tls", probe.Fail)})
+	if strings.Contains(plain.Summary, "black hole") {
+		t.Errorf("no pmtu warning, but summary %q has the hint", plain.Summary)
 	}
 }

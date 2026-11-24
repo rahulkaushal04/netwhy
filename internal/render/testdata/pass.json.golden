@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "target": "example.com",
+  "ok": true,
+  "summary": "all checks passed",
+  "evidence": {
+    "sent": "",
+    "received": "",
+    "duration_ms": 0
+  },
+  "results": [
+    {
+      "name": "system",
+      "status": "pass",
+      "summary": "interface up",
+      "evidence": {
+        "sent": "route lookup",
+        "received": "",
+        "duration_ms": 1
+      }
+    },
+    {
+      "name": "dns",
+      "status": "pass",
+      "summary": "example.com resolved to 192.0.2.1",
+      "evidence": {
+        "sent": "A and AAAA for example.com",
+        "received": "192.0.2.53:53: NOERROR, 1 address(es), 12ms",
+        "duration_ms": 12
+      }
+    },
+    {
+      "name": "tcp",
+      "status": "pass",
+      "summary": "connected over IPv4",
+      "evidence": {
+        "sent": "",
+        "received": "",
+        "duration_ms": 20
+      }
+    }
+  ]
+}

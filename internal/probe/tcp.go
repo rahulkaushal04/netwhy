@@ -25,11 +25,18 @@ var _ Probe = TCP{}
 type TCP struct {
 	Port int
 	Path *Path
+	// Dep is the probe that must work first; empty means dns.
+	Dep string
 }
 
 func (TCP) Name() string { return "tcp" }
 
-func (TCP) Deps() []string { return []string{"dns"} }
+func (p TCP) Deps() []string {
+	if p.Dep == "" {
+		return []string{"dns"}
+	}
+	return []string{p.Dep}
+}
 
 type attempt struct {
 	addr netip.AddrPort

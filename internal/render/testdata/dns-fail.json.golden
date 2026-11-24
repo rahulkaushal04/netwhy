@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "target": "example.com",
+  "ok": false,
+  "layer": "dns",
+  "summary": "no DNS resolver answered (timeout or unreachable)",
+  "evidence": {
+    "sent": "A and AAAA for example.com to 192.0.2.53:53, 192.0.2.54:53",
+    "received": "192.0.2.53:53: no reply (i/o timeout)\n192.0.2.54:53: no reply (i/o timeout)",
+    "duration_ms": 5000,
+    "error": "read udp: i/o timeout"
+  },
+  "results": [
+    {
+      "name": "system",
+      "status": "pass",
+      "summary": "interface up",
+      "evidence": {
+        "sent": "",
+        "received": "",
+        "duration_ms": 0
+      }
+    },
+    {
+      "name": "dns",
+      "status": "fail",
+      "summary": "no DNS resolver answered (timeout or unreachable)",
+      "evidence": {
+        "sent": "A and AAAA for example.com to 192.0.2.53:53, 192.0.2.54:53",
+        "received": "192.0.2.53:53: no reply (i/o timeout)\n192.0.2.54:53: no reply (i/o timeout)",
+        "duration_ms": 5000,
+        "error": "read udp: i/o timeout"
+      }
+    },
+    {
+      "name": "tcp",
+      "status": "skipped",
+      "summary": "skipped because dns did not work",
+      "evidence": {
+        "sent": "",
+        "received": "",
+        "duration_ms": 0
+      }
+    }
+  ]
+}
